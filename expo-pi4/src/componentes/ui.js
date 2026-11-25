@@ -39,9 +39,15 @@ export function Selo({ texto, cor = cores.texto3 }) {
 
 export function Campo({ rotulo, erro, ...props }) {
   return (
-    <View style={{ gap: 6 }}>
+     <View style={{ gap: 6 }}>
       {rotulo ? <Text style={s.rotulo}>{rotulo}</Text> : null}
-      <TextInput placeholderTextColor={cores.texto3} style={[s.campo, erro && { borderColor: cores.perigo }]} {...props} />
+      <TextInput
+        ref={inputRef}
+        accessibilityLabel={rotulo}
+        placeholderTextColor={cores.texto3}
+        style={[s.campo, erro && { borderColor: cores.perigo }]}
+        {...props}
+      />
       {erro ? <Text style={s.erro}>{erro}</Text> : null}
     </View>
   );
@@ -80,6 +86,7 @@ export const s = StyleSheet.create({
   texto: { color: cores.texto, fontSize: 15 },
   texto2: { color: cores.texto2, fontSize: 14 },
   texto3: { color: cores.texto3, fontSize: 13 },
+  tituloCartao: { color: cores.texto, fontSize: 15, fontWeight: "700" },
   rotulo: { color: cores.texto2, fontSize: 13 },
   erro: { color: cores.perigo, fontSize: 12 },
   botao: { minHeight: ALVO, borderRadius: raio.medio, borderWidth: 1, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },

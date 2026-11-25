@@ -1,203 +1,163 @@
 // Perfil e configurações (Sofia): nome, telefone, trocar senha, avisos e sair.
 import { useEffect, useRef, useState } from "react";
-import { Alert, Linking, ScrollView, Switch, Text, View } from "react-native";
-import Constants from "expo-constants";
-import * as Device from "expo-device";
-import * as Notifications from "expo-notifications";
-import * as SecureStore from "expo-secure-store";
-import { Botao, Campo, Cartao, Erro, s } from "../componentes/ui";
-import { atualizarPerfil, cancelarAparelho, meusDados, trocarSenha } from "../api/servicos";
+import { Alert, Linking, ScrollView, Text } from "react-native";
+import { Botao, Campo, Cartao, s } from "../componentes/ui";
+import LinhaInterruptor from "../componentes/LinhaInterruptor";
+import Retorno from "../componentes/Retorno";
+import { atualizarPerfil, meusDados, trocarSenha } from "../api/servicos";
 import { useSessao } from "../contexto";
-import { ativarAvisosDeLead } from "../notificacoes/push";
+import { useAvisosNoCelular } from "../hooks/useAvisosNoCelular";
+import { formatarTelefone, soDigitos } from "../utils/telefone";
+import { validarSenha } from "../utils/validacao";
 import { SITE_URL } from "../config";
-import { cores } from "../tema";
 
-// Escolha de quem DESLIGOU o aviso neste celular (o push.js liga sozinho no login)
-const FLAG_DESLIGADO = "pb_push_desligado";
-
-const soDigitos = (v) => String (v ?? "").replace(/\D/g, "").slice(0, 11);
-
-function formatarTelefone(v){
-  const d = soDigitos(v);
-  if (d.length <= 2) return d;
-  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
-
-// Mesmas regras do back (PATCH /auth/senha), para avisar sem ir ao servidor.
-function validarSenha({ senhaAtual, novaSenha, confirmarSenha }) {
-  const erros = {};
-  if (!senhaAtual) erros.senhaAtual = "Informe a senha atual.";
-  if (!novaSenha || novaSenha.length < 8) erros.novaSenha = "A nova senha deve ter pelo menos 8 caracteres.";
-  else if (novaSenha === senhaAtual) erros.novaSenha = "A nova senha precisa ser diferente da atual.";
-  if (confirmarSenha !== novaSenha) erros.confirmarSenha = "As senhas não coincidem.";
-  return erros;
-}
-
-function mensagemDoMotivo(motivo) {
-  const texto = String(motivo ?? "");
-  if (texto === "sem permissão") return "Permissão negada. Ative as notificações do app nas configurações do celular.";
-  if (texto.includes("eas init")) return "O app ainda não está ligado ao projeto do Expo. Fale com o Arthur.";
-  return "Não foi possível ativar agora. No Android o aviso não funciona no Expo Go: use o APK.";
-}
-
-async function tokenDoAparelho() {
-  const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-  if (!Device.isDevice || !projectId) return null;
-  const { data } = await Notifications.getExpoPushTokenAsync({ projectId });
-  return data;
-}
-
-/** Aviso de lead no celular: ligado por padrão (o push.js registra no login); aqui a pessoa pode desligar. */
-function useAvisosNoCelular() {
-  const [ativo, setAtivo] = useState(false);
-  const [ocupado, setOcupado] = useState(false);
-
-  useEffect(() => {
-    let vivo = true;
-    (async () => {
-      const { status } = await Notifications.getPermissionsAsync();
-      const desligado = await SecureStore.getItemAsync(FLAG_DESLIGADO);
-      if (vivo) setAtivo(status === "granted" && !desligado);
-    })().catch(() => {});
-    return () => { vivo = false; };
-  }, []);
-
-  async function cancelarNoServidor() {
-    let token = null;
-    try { token = await tokenDoAparelho(); } catch { /* Expo Go no Android: nunca houve inscrição */ }
-    if (token) await cancelarAparelho(token);
-  }
-
-  async function ligar() {
-    if (!Device.isDevice) throw new Error("Os avisos no celular só funcionam em um aparelho de verdade.");
-    setOcupado(true);
-    try {
-      const r = await ativarAvisosDeLead();
-      if (!r.ativo) throw new Error(mensagemDoMotivo(r.motivo));
-      await SecureStore.deleteItemAsync(FLAG_DESLIGADO);
-      setAtivo(true);
-    } finally { setOcupado(false); }
-  }
-
-  async function desligar() {
-    setOcupado(true);
-    try {
-      await cancelarNoServidor();
-      await SecureStore.setItemAsync(FLAG_DESLIGADO, "1");
-      setAtivo(false);
-    } finally { setOcupado(false); }
-  }
-
-  /** Na saída: tira este aparelho da conta (com o token pego de novo) e limpa a escolha. */
-  async function aoSair() {
-    try { await cancelarNoServidor(); } catch { /* sem internet: sai do mesmo jeito */ }
-    await SecureStore.deleteItemAsync(FLAG_DESLIGADO).catch(() => {});
-  }
-
-  return { ativo, ocupado, ligar, desligar, aoSair };
-}
-
-/** Resultado da ação, logo embaixo do botão que a pessoa tocou. */
-function Retorno({ retorno }) {
-  if (!retorno?.texto) return null;
-  if (retorno.tipo === "ok") return <Text style={{ color: cores.ok }} accessibilityLiveRegion="polite">{retorno.texto}</Text>;
-  return <Erro texto={retorno.texto} />;
-}
-
-function LinhaInterruptor({ titulo, descricao, valor, aoMudar, ocupado }) {
-  return (
-    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 56, gap: 12 }}>
-      <View style={{ flex: 1 }}>
-        <Text style={s.texto}>{titulo}</Text>
-        {descricao ? <Text style={s.texto2}>{descricao}</Text> : null}
-      </View>
-      <Switch value={valor} onValueChange={aoMudar} disabled={ocupado} accessibilityLabel={titulo} />
-    </View>
-  );
-}
+const SENHA_VAZIA = { senhaAtual: "", novaSenha: "", confirmarSenha: "" };
 
 export default function PerfilTela() {
   const { usuario, sair, atualizarUsuario } = useSessao();
   const celular = useAvisosNoCelular();
 
+  const [carregando, setCarregando] = useState(true);
+
   const [nome, setNome] = useState(usuario?.nome ?? "");
-  const [telefone, setTelefone] = useState("");
-  const [telefoneAlterado, setTelefoneAlterado] = useState(false);
+  const [nomeBase, setNomeBase] = useState(usuario?.nome ?? "");
+  const [telefone, setTelefone] = useState(""); // só dígitos
+  const [telefoneBase, setTelefoneBase] = useState("");
   const [errosPerfil, setErrosPerfil] = useState({});
   const [retornoPerfil, setRetornoPerfil] = useState(null);
   const nomeMexido = useRef(false);
+  const telefoneMexido = useRef(false);
 
-  const [senha, setSenha] = useState({ senhaAtual: "", novaSenha: "", confirmarSenha: "" });
+  const [senha, setSenha] = useState(SENHA_VAZIA);
+  const [verSenhas, setVerSenhas] = useState(false);
   const [errosSenha, setErrosSenha] = useState({});
   const [retornoSenha, setRetornoSenha] = useState(null);
 
   const [avisoEmail, setAvisoEmail] = useState(Boolean(usuario?.avisoLeadEmail));
   const [ocupadoEmail, setOcupadoEmail] = useState(false);
   const [retornoAvisos, setRetornoAvisos] = useState(null);
+
   const [salvando, setSalvando] = useState(null);
+
+  // Refs para pular de campo em campo pelo teclado
+  const telefoneRef = useRef(null);
+  const novaSenhaRef = useRef(null);
+  const confirmarRef = useRef(null);
 
   useEffect(() => {
     let vivo = true;
     meusDados()
       .then((u) => {
         if (!vivo) return;
-        if (!nomeMexido.current) setNome(u.nome ?? ""); // não apaga o que a pessoa já digitou
+        setNomeBase(u.nome ?? "");
         setAvisoEmail(Boolean(u.avisoLeadEmail));
+        if (!nomeMexido.current) setNome(u.nome ?? "");
+        // se o back devolver o telefone, ele passa a ser a base de comparação
+        const tel = soDigitos(u.telefone);
+        setTelefoneBase(tel);
+        if (!telefoneMexido.current) setTelefone(tel);
       })
-      .catch(() => {});
+      .catch((e) => { if (__DEV__) console.warn("meusDados falhou:", e); })
+      .finally(() => { if (vivo) setCarregando(false); });
     return () => { vivo = false; };
   }, []);
 
-  const perfilMudou = nome.trim() !== (usuario?.nome ?? "") || telefoneAlterado;
+  const perfilMudou = nome.trim() !== nomeBase || telefone !== telefoneBase;
 
-  async function salvarPerfil() {
-    if (!nome.trim()) { setErrosPerfil({ nome: "Informe o nome." }); return; }
-    const corpo = {};
-    if (nome.trim() !== usuario?.nome) corpo.nome = nome.trim();
-    if (telefoneAlterado) corpo.telefone = soDigitos(telefone); // vazio limpa o telefone
-
-    setSalvando("perfil"); setErrosPerfil({}); setRetornoPerfil(null);
+  /** Padrão comum de salvar: limpa mensagens, roda a ação, mostra erro de campo ou sucesso. */
+  async function executar({ chave, acao, aoSucesso, setErros, setRetorno, textoOk }) {
+    setSalvando(chave);
+    setErros({});
+    setRetorno(null);
     try {
-      const u = await atualizarPerfil(corpo);
-      atualizarUsuario(u);
-      setTelefoneAlterado(false);
-      setRetornoPerfil({ tipo: "ok", texto: "Dados salvos." });
+      const resultado = await acao();
+      aoSucesso(resultado);
+      setRetorno({ tipo: "ok", texto: textoOk });
     } catch (e) {
       const campos = e.fieldErrors ?? {};
-      setErrosPerfil(campos);
-      setRetornoPerfil({ tipo: "erro", texto: Object.keys(campos).length ? "Verifique os campos destacados." : e.message });
-    } finally { setSalvando(null); }
+      setErros(campos);
+      setRetorno({
+        tipo: "erro",
+        texto: Object.keys(campos).length ? "Verifique os campos destacados." : e.message,
+      });
+    } finally {
+      setSalvando(null);
+    }
   }
 
-  async function salvarSenha() {
+  function salvarPerfil() {
+    if (!nome.trim()) {
+      setErrosPerfil({ nome: "Informe o nome." });
+      return;
+    }
+    const corpo = {};
+    if (nome.trim() !== nomeBase) corpo.nome = nome.trim();
+    if (telefone !== telefoneBase) corpo.telefone = telefone; // vazio limpa o telefone
+
+    return executar({
+      chave: "perfil",
+      setErros: setErrosPerfil,
+      setRetorno: setRetornoPerfil,
+      textoOk: "Dados salvos.",
+      acao: () => atualizarPerfil(corpo),
+      aoSucesso: (u) => {
+        atualizarUsuario(u);
+        setNomeBase(nome.trim());
+        setTelefoneBase(telefone);
+      },
+    });
+  }
+
+  function salvarSenha() {
     const erros = validarSenha(senha);
-    setErrosSenha(erros); setRetornoSenha(null);
+    setErrosSenha(erros);
+    setRetornoSenha(null);
     if (Object.keys(erros).length) return;
 
-    setSalvando("senha");
-    try {
-      await trocarSenha(senha);
-      setSenha({ senhaAtual: "", novaSenha: "", confirmarSenha: "" });
-      setRetornoSenha({ tipo: "ok", texto: "Senha alterada." });
-    } catch (e) {
-      const campos = e.fieldErrors ?? {};
-      setErrosSenha(campos);
-      setRetornoSenha({ tipo: "erro", texto: Object.keys(campos).length ? "Verifique os campos destacados." : e.message });
-    } finally { setSalvando(null); }
+    return executar({
+      chave: "senha",
+      setErros: setErrosSenha,
+      setRetorno: setRetornoSenha,
+      textoOk: "Senha alterada.",
+      acao: () => trocarSenha(senha),
+      aoSucesso: () => setSenha(SENHA_VAZIA),
+    });
   }
 
+  // Ao digitar, some a mensagem antiga e o erro daquele campo.
+  function mudarNome(v) {
+    nomeMexido.current = true;
+    setNome(v);
+    setRetornoPerfil(null);
+    setErrosPerfil((e) => ({ ...e, nome: undefined }));
+  }
+
+  function mudarTelefone(v) {
+    telefoneMexido.current = true;
+    setTelefone(soDigitos(v));
+    setRetornoPerfil(null);
+    setErrosPerfil((e) => ({ ...e, telefone: undefined }));
+  }
+
+  const mudarSenha = (chave) => (v) => {
+    setSenha((x) => ({ ...x, [chave]: v }));
+    setRetornoSenha(null);
+    setErrosSenha((e) => ({ ...e, [chave]: undefined }));
+  };
+
   async function alternarEmail(valor) {
-    setAvisoEmail(valor); // muda na hora; volta atrás se o servidor recusar
-    setOcupadoEmail(true); setRetornoAvisos(null);
+    setAvisoEmail(valor);
+    setOcupadoEmail(true);
+    setRetornoAvisos(null);
     try {
       const u = await atualizarPerfil({ avisoLeadEmail: valor });
       atualizarUsuario(u);
     } catch (e) {
       setAvisoEmail(!valor);
       setRetornoAvisos({ tipo: "erro", texto: e.message });
-    } finally { setOcupadoEmail(false); }
+    } finally {
+      setOcupadoEmail(false);
+    }
   }
 
   async function alternarCelular(valor) {
@@ -205,17 +165,17 @@ export default function PerfilTela() {
     try {
       if (valor) await celular.ligar();
       else await celular.desligar();
-    } catch (e) { setRetornoAvisos({ tipo: "erro", texto: e.message }); }
+    } catch (e) {
+      setRetornoAvisos({ tipo: "erro", texto: e.message });
+    }
   }
 
   async function abrirSite() {
-    try { await Linking.openURL(SITE_URL); }
-    catch { Alert.alert("Não deu para abrir", `Acesse ${SITE_URL} no navegador.`); }
-  }
-
-  async function testarAvisos() {
-    const r = await ativarAvisosDeLead();
-    Alert.alert(r.ativo ? "Avisos ligados" : "Avisos desligados", r.ativo ? "Você vai receber um aviso quando chegar lead novo." : `Motivo: ${r.motivo}. Confira a permissão de notificações do app.`);
+    try {
+      await Linking.openURL(SITE_URL);
+    } catch {
+      Alert.alert("Não deu para abrir", `Acesse ${SITE_URL} no navegador.`);
+    }
   }
 
   function confirmarSaida() {
@@ -232,9 +192,6 @@ export default function PerfilTela() {
     ]);
   }
 
-  const campoSenha = (chave) => (v) => setSenha((x) => ({...x,[chave]: v}));
-
-
   return (
     <ScrollView
       style={s.tela}
@@ -246,63 +203,83 @@ export default function PerfilTela() {
       <Text style={s.subtitulo}>{usuario?.email}</Text>
 
       <Cartao>
-        <Text style={[s.texto, { fontWeight: "700" }]}>Meus dados</Text>
-        <Campo rotulo="Nome" value={nome} onChangeText={(v) => { nomeMexido.current = true; setNome(v); }}
+        <Text style={s.tituloCartao} accessibilityRole="header">Meus dados</Text>
+        <Campo
+          rotulo="Nome"
+          value={nome}
+          onChangeText={mudarNome}
           erro={errosPerfil.nome}
+          editable={!carregando}
           autoComplete="name"
           autoCapitalize="words"
+          returnKeyType="next"
+          onSubmitEditing={() => telefoneRef.current?.focus()}
         />
         <Campo
+          inputRef={telefoneRef}
           rotulo="Telefone (WhatsApp)"
           value={formatarTelefone(telefone)}
-          onChangeText={(v) => { setTelefone(soDigitos(v)); setTelefoneAlterado(true); }}
+          onChangeText={mudarTelefone}
           erro={errosPerfil.telefone}
+          editable={!carregando}
           keyboardType="phone-pad"
           autoComplete="tel"
           placeholder="(81) 99999-9999"
         />
-        <Text style={s.texto2}>Preencha o telefone só se quiser trocar o número. Apagar tudo e salvar remove o número.</Text>
-        <Botao titulo="Salvar" onPress={salvarPerfil} carregando={salvando === "perfil"} desativado={!perfilMudou} />
+        <Text style={s.texto2}>Apague o número por completo e salve para removê-lo.</Text>
+        <Botao
+          titulo="Salvar"
+          onPress={salvarPerfil}
+          carregando={salvando === "perfil"}
+          desativado={carregando || !perfilMudou}
+        />
         <Retorno retorno={retornoPerfil} />
       </Cartao>
 
       <Cartao>
-        <Text style={[s.texto, { fontWeight: "700" }]}>Trocar senha</Text>
+        <Text style={s.tituloCartao} accessibilityRole="header">Trocar senha</Text>
         <Campo
           rotulo="Senha atual"
-          secureTextEntry
+          secureTextEntry={!verSenhas}
           value={senha.senhaAtual}
           erro={errosSenha.senhaAtual}
-          onChangeText={campoSenha("senhaAtual")}
+          onChangeText={mudarSenha("senhaAtual")}
           autoComplete="current-password"
           textContentType="password"
+          returnKeyType="next"
+          onSubmitEditing={() => novaSenhaRef.current?.focus()}
         />
         <Campo
+          inputRef={novaSenhaRef}
           rotulo="Nova senha (mín. 8 caracteres)"
-          secureTextEntry
+          secureTextEntry={!verSenhas}
           value={senha.novaSenha}
           erro={errosSenha.novaSenha}
-          onChangeText={campoSenha("novaSenha")}
+          onChangeText={mudarSenha("novaSenha")}
           autoComplete="new-password"
           textContentType="newPassword"
+          returnKeyType="next"
+          onSubmitEditing={() => confirmarRef.current?.focus()}
         />
         <Campo
+          inputRef={confirmarRef}
           rotulo="Confirmar nova senha"
-          secureTextEntry
+          secureTextEntry={!verSenhas}
           value={senha.confirmarSenha}
           erro={errosSenha.confirmarSenha}
-          onChangeText={campoSenha("confirmarSenha")}
+          onChangeText={mudarSenha("confirmarSenha")}
           autoComplete="new-password"
           textContentType="newPassword"
           returnKeyType="done"
           onSubmitEditing={salvarSenha}
         />
+        <LinhaInterruptor titulo="Mostrar senhas" valor={verSenhas} aoMudar={setVerSenhas} />
         <Botao titulo="Trocar senha" tipo="contorno" onPress={salvarSenha} carregando={salvando === "senha"} />
-        <Retorno retorno={retornoSenha}/>
+        <Retorno retorno={retornoSenha} />
       </Cartao>
 
-       <Cartao>
-        <Text style={[s.texto, { fontWeight: "700" }]}>Avisos de lead novo</Text>
+      <Cartao>
+        <Text style={s.tituloCartao} accessibilityRole="header">Avisos de lead novo</Text>
         <LinhaInterruptor
           titulo="Aviso no celular"
           descricao="Notificação neste aparelho assim que chegar um lead."

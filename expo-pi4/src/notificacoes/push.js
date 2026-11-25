@@ -67,13 +67,22 @@ export async function desativarAvisosDeLead() {
   tokenAtual = null;
 }
 
-/** Lembrete local com alarme na hora combinada com o cliente. */
+/** Lembrete local com alarme na hora combinada com o cliente. Devolve o id ou null. */
 export async function agendarLembrete({ quando, nome, nota, leadId }) {
+  const data = new Date(quando);
+  if (Number.isNaN(data.getTime()) || data.getTime() <= Date.now()) return null;
+
   await prepararCanais();
   if (!(await permissao())) return null;
+
   return Notifications.scheduleNotificationAsync({
-    content: { title: `Retornar para ${nome}`, body: nota || "Hora de ligar para o cliente.", data: { url: "leads", leadId }, sound: true },
-    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(quando), channelId: "lembretes" },
+    content: {
+      title: `Retornar para ${nome}`,
+      body: nota || "Hora de ligar para o cliente.",
+      data: { url: "leads", leadId },
+      sound: true,
+    },
+    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: data, channelId: "lembretes" },
   });
 }
 
